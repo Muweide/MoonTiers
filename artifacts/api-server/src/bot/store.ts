@@ -14,6 +14,7 @@ export interface QueueState {
   messageId: string | null;
   channelId: string;
   players: Player[];
+  activeTesters: string[];
   currentlyTesting: Player | null;
   ticketChannelId: string | null;
   testerUserId: string | null;

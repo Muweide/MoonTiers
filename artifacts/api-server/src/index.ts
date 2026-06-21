@@ -1,5 +1,6 @@
-import app from "./app";
-import { logger } from "./lib/logger";
+import app from "./app.js";
+import { logger } from "./lib/logger.js";
+import { startBot } from "./bot/bot.js";
 
 const rawPort = process.env["PORT"];
 
@@ -20,6 +21,10 @@ app.listen(port, (err) => {
     logger.error({ err }, "Error listening on port");
     process.exit(1);
   }
-
   logger.info({ port }, "Server listening");
+});
+
+startBot().catch((err) => {
+  logger.error({ err }, "Discord bot failed to start");
+  process.exit(1);
 });

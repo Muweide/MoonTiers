@@ -1,6 +1,9 @@
 import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
-import type { QueueState, Player } from './store.js';
-import { KIT_DISPLAY, KIT_EMOJI, TIER_DISPLAY, MAX_QUEUE, type Kit, type Tier } from './constants.js';
+import type { QueueState, Player, TesterStat, LeaderboardEntry } from './store.js';
+import {
+  KIT_DISPLAY, KIT_EMOJI, TIER_DISPLAY, TIER_RANK, getBestTier,
+  MAX_QUEUE, KITS, type Kit, type Tier,
+} from './constants.js';
 
 export function buildQueueEmbed(state: QueueState): EmbedBuilder {
   const kit = state.kit;
@@ -9,7 +12,6 @@ export function buildQueueEmbed(state: QueueState): EmbedBuilder {
 
   const lines: string[] = [];
   const count = state.players.length;
-
   if (count === 0) {
     lines.push('*(Noch niemand in der Queue)*');
   } else {
@@ -19,10 +21,9 @@ export function buildQueueEmbed(state: QueueState): EmbedBuilder {
     }
   }
 
-  const testerSection =
-    state.activeTesters.length > 0
-      ? '\n\n**Testers:**\n' + state.activeTesters.map((id) => `<@${id}>`).join('\n')
-      : '';
+  const testerSection = state.activeTesters.length > 0
+    ? '\n\n**Testers:**\n' + state.activeTesters.map((id) => `<@${id}>`).join('\n')
+    : '';
 
   return new EmbedBuilder()
     .setColor(0x5865f2)
@@ -49,10 +50,7 @@ export function buildQueueRow(kit: Kit, isFull: boolean): ActionRowBuilder<Butto
 export function buildClosedEmbed(kit: Kit, lastSession: Date | null): EmbedBuilder {
   const display = KIT_DISPLAY[kit];
   const emoji = KIT_EMOJI[kit];
-  const lastStr = lastSession
-    ? `<t:${Math.floor(lastSession.getTime() / 1000)}:f>`
-    : 'Never';
-
+  const lastStr = lastSession ? `<t:${Math.floor(lastSession.getTime() / 1000)}:f>` : 'Never';
   return new EmbedBuilder()
     .setColor(0xed4245)
     .setTitle(`${emoji} ${display} Queue — Closed`)
@@ -63,16 +61,11 @@ export function buildClosedEmbed(kit: Kit, lastSession: Date | null): EmbedBuild
 }
 
 export function buildResultEmbed(
-  player: Player,
-  testerMention: string,
-  prevTier: Tier | null,
-  newTier: Tier,
-  kit: Kit,
+  player: Player, testerMention: string, prevTier: Tier | null, newTier: Tier, kit: Kit,
 ): EmbedBuilder {
   const display = KIT_DISPLAY[kit];
   const prevDisplay = prevTier ? TIER_DISPLAY[prevTier] : 'N/A';
   const newDisplay = TIER_DISPLAY[newTier];
-
   return new EmbedBuilder()
     .setColor(0xe67e22)
     .setTitle(`🏆 ${player.ign}'s test result`)
@@ -105,4 +98,54 @@ export function buildVerifyRow(): ActionRowBuilder<ButtonBuilder> {
       .setLabel('Join Waitlist')
       .setStyle(ButtonStyle.Primary),
   );
+}
+
+export function buildTesterLeaderboardEmbed(topTesters: TesterStat[]): EmbedBuilder {
+  const medals = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣'];
+  const lines = topTesters.length === 0
+    ? ['*(Noch keine Tests gemacht)*']
+    : topTesters.map((t, i) =>
+        `${medals[i] ?? `${i + 1}.`} <@${t.userId}> — **${t.testCount}** Tests`,
+      );
+
+  return new EmbedBuilder()
+    .setColor(0xf1c40f)
+    .setTitle('🏆 Tester Leaderboard — Top 5')
+    .setDescription(lines.join('\n'))
+    .setFooter({ text: 'Aktualisiert alle 10 Sekunden' })
+    .setTimestamp();
+}
+
+export function buildPlayerLeaderboardEmbed(entries: LeaderboardEntry[]): EmbedBuilder {
+  if (entries.length === 0) {
+    return new EmbedBuilder()
+      .setColor(0x2ecc71)
+      .setTitle('🏅 Player Leaderboard')
+      .setDescription('*(Noch keine Einträge)*')
+      .setFooter({ text: 'Aktualisiert alle 10 Sekunden' })
+      .setTimestamp();
+  }
+
+  const sorted = [...entries].sort((a, b) => {
+    const bestA = getBestTier(a.tierPerKit);
+    const bestB = getBestTier(b.tierPerKit);
+    const rankA = bestA ? TIER_RANK[bestA] : 999;
+    const rankB = bestB ? TIER_RANK[bestB] : 999;
+    return rankA - rankB;
+  });
+
+  const lines = sorted.slice(0, 20).map((entry, i) => {
+    const tiers = KITS
+      .filter((k) => entry.tierPerKit.has(k))
+      .map((k) => `${KIT_EMOJI[k]}${entry.tierPerKit.get(k)!.toUpperCase()}`)
+      .join(' ');
+    return `**${i + 1}.** ${entry.ign}${tiers ? ` — ${tiers}` : ''}`;
+  });
+
+  return new EmbedBuilder()
+    .setColor(0x2ecc71)
+    .setTitle('🏅 Player Leaderboard')
+    .setDescription(lines.join('\n'))
+    .setFooter({ text: 'Aktualisiert alle 10 Sekunden' })
+    .setTimestamp();
 }

@@ -2,42 +2,36 @@ export const KITS = ['uhc', 'sword', 'mace', 'diapot', 'nethpot', 'smp', 'crysta
 export type Kit = typeof KITS[number];
 
 export const KIT_DISPLAY: Record<Kit, string> = {
-  uhc: 'UHC',
-  sword: 'Sword',
-  mace: 'Mace',
-  diapot: 'Diapot',
-  nethpot: 'Nethpot',
-  smp: 'SMP',
-  crystal: 'Crystal',
-  axe: 'Axe',
+  uhc: 'UHC', sword: 'Sword', mace: 'Mace', diapot: 'Diapot',
+  nethpot: 'Nethpot', smp: 'SMP', crystal: 'Crystal', axe: 'Axe',
 };
 
 export const KIT_EMOJI: Record<Kit, string> = {
-  uhc: '⚔️',
-  sword: '🗡️',
-  mace: '🔨',
-  diapot: '💊',
-  nethpot: '🧪',
-  smp: '🌍',
-  crystal: '💎',
-  axe: '🪓',
+  uhc: '⚔️', sword: '🗡️', mace: '🔨', diapot: '💊',
+  nethpot: '🧪', smp: '🌍', crystal: '💎', axe: '🪓',
 };
 
 export const TIERS = ['lt5', 'ht5', 'lt4', 'ht4', 'lt3', 'ht3', 'lt2', 'ht2', 'lt1', 'ht1'] as const;
 export type Tier = typeof TIERS[number];
 
 export const TIER_DISPLAY: Record<Tier, string> = {
-  lt5: 'Low Tier 5',
-  ht5: 'High Tier 5',
-  lt4: 'Low Tier 4',
-  ht4: 'High Tier 4',
-  lt3: 'Low Tier 3',
-  ht3: 'High Tier 3',
-  lt2: 'Low Tier 2',
-  ht2: 'High Tier 2',
-  lt1: 'Low Tier 1',
-  ht1: 'High Tier 1',
+  lt5: 'Low Tier 5', ht5: 'High Tier 5', lt4: 'Low Tier 4', ht4: 'High Tier 4',
+  lt3: 'Low Tier 3', ht3: 'High Tier 3', lt2: 'Low Tier 2', ht2: 'High Tier 2',
+  lt1: 'Low Tier 1', ht1: 'High Tier 1',
 };
+
+// Lower = better. ht1 best (1), lt5 worst (10)
+export const TIER_RANK: Record<Tier, number> = {
+  ht1: 1, lt1: 2, ht2: 3, lt2: 4, ht3: 5, lt3: 6, ht4: 7, lt4: 8, ht5: 9, lt5: 10,
+};
+
+export function getBestTier(tierPerKit: Map<Kit, Tier>): Tier | null {
+  let best: Tier | null = null;
+  for (const tier of tierPerKit.values()) {
+    if (!best || TIER_RANK[tier] < TIER_RANK[best]) best = tier;
+  }
+  return best;
+}
 
 export const WAITLIST_CHANNEL_PATTERN = /^(?:.*\|)?(.+)-waitlist$/;
 
@@ -50,47 +44,36 @@ export function getKitFromChannelName(channelName: string): Kit | null {
 }
 
 export const MAX_QUEUE = 20;
-
 export const VERIFIED_TESTER_ROLE = 'Verified Tester';
-
 export const RESULTS_CHANNEL_KEY = 'results';
 export const HIGH_RESULTS_CHANNEL_KEY = 'high-results';
 
-export interface ChannelDef {
-  name: string;
-  category: string;
-}
+export interface ChannelDef { name: string; category: string; }
 
 export const CHANNELS_TO_CREATE: ChannelDef[] = [
   { name: '🏆｜high-results',       category: 'Results'   },
   { name: '🏆｜results',            category: 'Results'   },
   { name: '📋｜forum-posting',      category: 'Results'   },
-
   { name: '💬｜general',            category: 'General'   },
   { name: '📺｜media',              category: 'General'   },
   { name: '🐾｜pets',               category: 'General'   },
   { name: '🚩｜your-videos',        category: 'General'   },
   { name: '🔧｜commands-music',     category: 'General'   },
-
   { name: '🔔｜poll-pings',         category: 'Fun'       },
   { name: '📊｜poll-of-the-day',    category: 'Fun'       },
   { name: '💬｜poll-discuss',       category: 'Fun'       },
-
   { name: '✉️｜request-test',       category: 'Requests'  },
   { name: '🗺️｜request-support',   category: 'Requests'  },
   { name: '❌｜report-staff',       category: 'Requests'  },
-
   { name: 'faq',                     category: 'Server'    },
   { name: '📕｜server-rules',       category: 'Server'    },
   { name: '📢｜announcements',      category: 'Server'    },
   { name: '❗｜advertisement',      category: 'Server'    },
   { name: '💗｜kindness',           category: 'Server'    },
-
   { name: '🎉｜booster-alerts',     category: 'Boosters'  },
   { name: '✨｜booster-perks',      category: 'Boosters'  },
   { name: '🌐｜subtiers-discords',  category: 'Boosters'  },
   { name: '🌐｜mctiers-discords',   category: 'Boosters'  },
-
   { name: '📖｜ranked-rubric',      category: 'Tierlist'  },
   { name: '📖｜ranked-ruleset',     category: 'Tierlist'  },
   { name: '❌｜punishments',        category: 'Tierlist'  },
@@ -103,13 +86,5 @@ export const KIT_WAITLIST_CHANNELS: ChannelDef[] = KITS.map((kit) => ({
 }));
 
 export const CATEGORIES = [
-  'Results',
-  'General',
-  'Fun',
-  'Requests',
-  'Server',
-  'Boosters',
-  'Tierlist',
-  'Waitlists',
-  'Tickets',
+  'Results', 'General', 'Fun', 'Requests', 'Server', 'Boosters', 'Tierlist', 'Waitlists', 'Tickets',
 ];

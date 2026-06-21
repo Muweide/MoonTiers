@@ -39,10 +39,11 @@ export const TIER_DISPLAY: Record<Tier, string> = {
   ht1: 'High Tier 1',
 };
 
-export const WAITLIST_CHANNEL_PATTERN = /^(.+)-waitlist$/;
+export const WAITLIST_CHANNEL_PATTERN = /^(?:.*\|)?(.+)-waitlist$/;
 
 export function getKitFromChannelName(channelName: string): Kit | null {
-  const match = channelName.match(WAITLIST_CHANNEL_PATTERN);
+  const clean = channelName.replace(/[^\w-]/g, '').toLowerCase();
+  const match = clean.match(/^(.+)-waitlist$/);
   if (!match) return null;
   const kitName = match[1] as Kit;
   return KITS.includes(kitName) ? kitName : null;
@@ -51,25 +52,64 @@ export function getKitFromChannelName(channelName: string): Kit | null {
 export const MAX_QUEUE = 20;
 
 export const VERIFIED_TESTER_ROLE = 'Verified Tester';
-export const RESULTS_CHANNEL = 'results';
-export const HIGH_RESULTS_CHANNEL = 'high-results';
 
-export const CATEGORY_NAMES = {
-  tierlist: 'Tierlist',
-  waitlists: 'Waitlists',
-  tickets: 'Tickets',
-  results: 'Results',
-  general: 'General',
-  server: 'Server',
-};
+export const RESULTS_CHANNEL_KEY = 'results';
+export const HIGH_RESULTS_CHANNEL_KEY = 'high-results';
 
-export const STANDARD_CHANNELS = [
-  { name: 'results', category: 'Results' },
-  { name: 'high-results', category: 'Results' },
-  { name: 'ranked-rubric', category: 'Tierlist' },
-  { name: 'ranked-ruleset', category: 'Tierlist' },
-  { name: 'testing-leaderboard', category: 'Tierlist' },
-  { name: 'request-test', category: 'Waitlists' },
-  { name: 'general', category: 'General' },
-  { name: 'announcements', category: 'General' },
+export interface ChannelDef {
+  name: string;
+  category: string;
+}
+
+export const CHANNELS_TO_CREATE: ChannelDef[] = [
+  { name: '🏆｜high-results',       category: 'Results'   },
+  { name: '🏆｜results',            category: 'Results'   },
+  { name: '📋｜forum-posting',      category: 'Results'   },
+
+  { name: '💬｜general',            category: 'General'   },
+  { name: '📺｜media',              category: 'General'   },
+  { name: '🐾｜pets',               category: 'General'   },
+  { name: '🚩｜your-videos',        category: 'General'   },
+  { name: '🔧｜commands-music',     category: 'General'   },
+
+  { name: '🔔｜poll-pings',         category: 'Fun'       },
+  { name: '📊｜poll-of-the-day',    category: 'Fun'       },
+  { name: '💬｜poll-discuss',       category: 'Fun'       },
+
+  { name: '✉️｜request-test',       category: 'Requests'  },
+  { name: '🗺️｜request-support',   category: 'Requests'  },
+  { name: '❌｜report-staff',       category: 'Requests'  },
+
+  { name: 'faq',                     category: 'Server'    },
+  { name: '📕｜server-rules',       category: 'Server'    },
+  { name: '📢｜announcements',      category: 'Server'    },
+  { name: '❗｜advertisement',      category: 'Server'    },
+  { name: '💗｜kindness',           category: 'Server'    },
+
+  { name: '🎉｜booster-alerts',     category: 'Boosters'  },
+  { name: '✨｜booster-perks',      category: 'Boosters'  },
+  { name: '🌐｜subtiers-discords',  category: 'Boosters'  },
+  { name: '🌐｜mctiers-discords',   category: 'Boosters'  },
+
+  { name: '📖｜ranked-rubric',      category: 'Tierlist'  },
+  { name: '📖｜ranked-ruleset',     category: 'Tierlist'  },
+  { name: '❌｜punishments',        category: 'Tierlist'  },
+  { name: '🏅｜testing-leaderboard', category: 'Tierlist' },
+];
+
+export const KIT_WAITLIST_CHANNELS: ChannelDef[] = KITS.map((kit) => ({
+  name: `${KIT_EMOJI[kit]}｜${kit}-waitlist`,
+  category: 'Waitlists',
+}));
+
+export const CATEGORIES = [
+  'Results',
+  'General',
+  'Fun',
+  'Requests',
+  'Server',
+  'Boosters',
+  'Tierlist',
+  'Waitlists',
+  'Tickets',
 ];

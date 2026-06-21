@@ -17,21 +17,21 @@ import {
   ButtonInteraction,
   ChatInputCommandInteraction,
   ModalSubmitInteraction,
-  StringSelectMenuBuilder,
-  StringSelectMenuOptionBuilder,
 } from 'discord.js';
 import { logger } from '../lib/logger.js';
 import {
   KITS,
   TIERS,
   KIT_DISPLAY,
+  KIT_EMOJI,
   TIER_DISPLAY,
   VERIFIED_TESTER_ROLE,
-  RESULTS_CHANNEL,
-  HIGH_RESULTS_CHANNEL,
+  RESULTS_CHANNEL_KEY,
+  HIGH_RESULTS_CHANNEL_KEY,
   MAX_QUEUE,
-  CATEGORY_NAMES,
-  STANDARD_CHANNELS,
+  CATEGORIES,
+  CHANNELS_TO_CREATE,
+  KIT_WAITLIST_CHANNELS,
   getKitFromChannelName,
   type Kit,
   type Tier,
@@ -69,10 +69,13 @@ function hasVerifiedTester(member: GuildMember): boolean {
   return member.roles.cache.some((r) => r.name === VERIFIED_TESTER_ROLE);
 }
 
-async function refreshQueueMessage(
-  channel: TextChannel,
-  state: QueueState,
-): Promise<void> {
+function findChannelByKey(guild: import('discord.js').Guild, key: string): TextChannel | undefined {
+  return guild.channels.cache.find(
+    (c) => c.type === ChannelType.GuildText && c.name.toLowerCase().includes(key.toLowerCase()),
+  ) as TextChannel | undefined;
+}
+
+async function refreshQueueMessage(channel: TextChannel, state: QueueState): Promise<void> {
   const embed = buildQueueEmbed(state);
   const row = buildQueueRow(state.kit, state.players.length >= MAX_QUEUE);
   try {
@@ -114,9 +117,7 @@ const commands = [
         .setName('tier')
         .setDescription('Das Tier das der Spieler bekommen hat')
         .setRequired(true)
-        .addChoices(
-          ...TIERS.map((t) => ({ name: TIER_DISPLAY[t], value: t })),
-        ),
+        .addChoices(...TIERS.map((t) => ({ name: TIER_DISPLAY[t], value: t }))),
     )
     .addUserOption((o) =>
       o.setName('tester').setDescription('Der Tester (dich selbst pingen)').setRequired(true),
@@ -147,22 +148,15 @@ client.once(Events.ClientReady, async (c) => {
 
 client.on(Events.InteractionCreate, async (interaction) => {
   try {
-    if (interaction.isChatInputCommand()) {
-      await handleCommand(interaction);
-    } else if (interaction.isButton()) {
-      await handleButton(interaction);
-    } else if (interaction.isModalSubmit()) {
-      await handleModal(interaction);
-    }
+    if (interaction.isChatInputCommand()) await handleCommand(interaction);
+    else if (interaction.isButton()) await handleButton(interaction);
+    else if (interaction.isModalSubmit()) await handleModal(interaction);
   } catch (err) {
     logger.error({ err }, 'Interaction error');
     const msg = { content: '❌ Ein Fehler ist aufgetreten.', ephemeral: true };
     if (interaction.isRepliable()) {
-      if (interaction.replied || interaction.deferred) {
-        await interaction.followUp(msg).catch(() => {});
-      } else {
-        await interaction.reply(msg).catch(() => {});
-      }
+      if (interaction.replied || interaction.deferred) await interaction.followUp(msg).catch(() => {});
+      else await interaction.reply(msg).catch(() => {});
     }
   }
 });
@@ -182,7 +176,7 @@ async function handleCommand(interaction: ChatInputCommandInteraction): Promise<
     }
     const kit = getKitFromChannelName(channel.name);
     if (!kit) {
-      await interaction.reply({ content: '❌ Benutze diesen Command in einem Kit-Waitlist-Channel (z.B. `sword-waitlist`).', ephemeral: true });
+      await interaction.reply({ content: '❌ Benutze diesen Command in einem Kit-Waitlist-Channel (z.B. `⚔️｜uhc-waitlist`).', ephemeral: true });
       return;
     }
     const existing = getQueue(guild.id, kit);
@@ -190,7 +184,6 @@ async function handleCommand(interaction: ChatInputCommandInteraction): Promise<
       await interaction.reply({ content: `❌ Die **${KIT_DISPLAY[kit]}** Queue ist bereits offen.`, ephemeral: true });
       return;
     }
-
     const state: QueueState = {
       isOpen: true,
       kit,
@@ -203,7 +196,6 @@ async function handleCommand(interaction: ChatInputCommandInteraction): Promise<
       lastSessionTime: new Date(),
     };
     setQueue(guild.id, kit, state);
-
     await interaction.deferReply({ ephemeral: true });
     const tc = channel as TextChannel;
     await refreshQueueMessage(tc, state);
@@ -226,24 +218,19 @@ async function handleCommand(interaction: ChatInputCommandInteraction): Promise<
       await interaction.reply({ content: `❌ Die **${KIT_DISPLAY[kit]}** Queue ist nicht offen.`, ephemeral: true });
       return;
     }
-
     await interaction.deferReply({ ephemeral: true });
     const tc = channel as TextChannel;
-
     if (state.messageId) {
       const old = await tc.messages.fetch(state.messageId).catch(() => null);
       if (old) await old.delete().catch(() => {});
     }
-
     const closedEmbed = buildClosedEmbed(kit, state.lastSessionTime);
     const closedMsg = await tc.send({ embeds: [closedEmbed] });
-
     state.isOpen = false;
     state.messageId = closedMsg.id;
     state.players = [];
     state.currentlyTesting = null;
     setQueue(guild.id, kit, state);
-
     await interaction.editReply({ content: `✅ **${KIT_DISPLAY[kit]}** Queue geschlossen.` });
   }
 
@@ -266,18 +253,15 @@ async function handleCommand(interaction: ChatInputCommandInteraction): Promise<
       await interaction.reply({ content: '❌ Die Queue ist leer.', ephemeral: true });
       return;
     }
-
     await interaction.deferReply({ ephemeral: true });
-
     const nextPlayer = state.players.shift()!;
     state.currentlyTesting = nextPlayer;
     state.testerUserId = interaction.user.id;
 
-    const ticketName = `ticket-${nextPlayer.ign.toLowerCase()}-${kit}`;
     const ticketCategory = guild.channels.cache.find(
       (c) => c.type === ChannelType.GuildCategory && c.name === 'Tickets',
     );
-
+    const ticketName = `ticket-${nextPlayer.ign.toLowerCase()}-${kit}`;
     const ticketChannel = await guild.channels.create({
       name: ticketName,
       type: ChannelType.GuildText,
@@ -310,14 +294,10 @@ async function handleCommand(interaction: ChatInputCommandInteraction): Promise<
     });
 
     state.ticketChannelId = ticketChannel.id;
-
     const tc = channel as TextChannel;
     await refreshQueueMessage(tc, state);
     setQueue(guild.id, kit, state);
-
-    await interaction.editReply({
-      content: `✅ <@${nextPlayer.userId}> aufgerufen! Ticket: ${ticketChannel}`,
-    });
+    await interaction.editReply({ content: `✅ <@${nextPlayer.userId}> aufgerufen! Ticket: ${ticketChannel}` });
   }
 
   else if (commandName === 'result') {
@@ -325,29 +305,23 @@ async function handleCommand(interaction: ChatInputCommandInteraction): Promise<
       await interaction.reply({ content: '❌ Du brauchst die **Verified Tester** Rolle.', ephemeral: true });
       return;
     }
-
     const tierValue = interaction.options.getString('tier', true) as Tier;
     const testerUser = interaction.options.getUser('tester', true);
-
     const kit = getKitFromChannelName(channel.name);
     if (!kit) {
       await interaction.reply({ content: '❌ Benutze diesen Command in einem Kit-Waitlist-Channel.', ephemeral: true });
       return;
     }
-
     const state = getQueue(guild.id, kit);
     if (!state?.currentlyTesting) {
       await interaction.reply({ content: '❌ Kein Spieler wird gerade getestet. Benutze `/next` zuerst.', ephemeral: true });
       return;
     }
-
     await interaction.deferReply({ ephemeral: true });
 
     const player = state.currentlyTesting;
-    const prevTier = player.currentTier;
-
     const profile = getUserProfile(guild.id, player.userId);
-    const prevTierFromProfile = profile?.tierPerKit.get(kit) ?? null;
+    const prevTier = profile?.tierPerKit.get(kit) ?? null;
 
     if (profile) {
       profile.tierPerKit.set(kit, tierValue);
@@ -359,9 +333,7 @@ async function handleCommand(interaction: ChatInputCommandInteraction): Promise<
     const newRoleName = `${tierValue.toUpperCase()} ${KIT_DISPLAY[kit]}`;
 
     let targetMember: GuildMember | null = null;
-    try {
-      targetMember = await guild.members.fetch(player.userId);
-    } catch {}
+    try { targetMember = await guild.members.fetch(player.userId); } catch {}
 
     if (targetMember) {
       for (const roleName of allOldTierRoles) {
@@ -371,29 +343,20 @@ async function handleCommand(interaction: ChatInputCommandInteraction): Promise<
         }
       }
       let newRole = guild.roles.cache.find((r) => r.name === newRoleName);
-      if (!newRole) {
-        newRole = await guild.roles.create({ name: newRoleName, reason: 'Tier result' });
-      }
+      if (!newRole) newRole = await guild.roles.create({ name: newRoleName, reason: 'Tier result' });
       await targetMember.roles.add(newRole).catch(() => {});
     }
 
     const testerMention = `<@${testerUser.id}>`;
-    const resultEmbed = buildResultEmbed(player, testerMention, prevTierFromProfile, tierValue, kit);
+    const resultEmbed = buildResultEmbed(player, testerMention, prevTier, tierValue, kit);
 
     const isHighTier = ['ht3', 'ht2', 'ht1', 'lt2', 'lt1'].includes(tierValue);
-    const resultsChannelName = isHighTier ? HIGH_RESULTS_CHANNEL : RESULTS_CHANNEL;
-    const resultsChannel = guild.channels.cache.find(
-      (c) => c.name === resultsChannelName && c.type === ChannelType.GuildText,
-    ) as TextChannel | undefined;
-
-    if (resultsChannel) {
-      await resultsChannel.send({ embeds: [resultEmbed] });
-    } else {
-      const fallback = guild.channels.cache.find(
-        (c) => c.name === RESULTS_CHANNEL && c.type === ChannelType.GuildText,
-      ) as TextChannel | undefined;
-      if (fallback) await fallback.send({ embeds: [resultEmbed] });
-    }
+    const resultsChannel = isHighTier
+      ? findChannelByKey(guild, HIGH_RESULTS_CHANNEL_KEY)
+      : findChannelByKey(guild, RESULTS_CHANNEL_KEY);
+    const fallback = findChannelByKey(guild, RESULTS_CHANNEL_KEY);
+    const target = resultsChannel ?? fallback;
+    if (target) await target.send({ embeds: [resultEmbed] });
 
     if (state.ticketChannelId) {
       const ticketCh = guild.channels.cache.get(state.ticketChannelId) as TextChannel | undefined;
@@ -410,14 +373,11 @@ async function handleCommand(interaction: ChatInputCommandInteraction): Promise<
     const tc = channel as TextChannel;
     await refreshQueueMessage(tc, state);
     setQueue(guild.id, kit, state);
-
     await interaction.editReply({ content: `✅ Ergebnis gepostet! ${testerMention} — **${TIER_DISPLAY[tierValue]}** für **${player.ign}**` });
   }
 
   else if (commandName === 'verify') {
-    const embed = buildVerifyEmbed();
-    const row = buildVerifyRow();
-    await interaction.reply({ embeds: [embed], components: [row] });
+    await interaction.reply({ embeds: [buildVerifyEmbed()], components: [buildVerifyRow()] });
   }
 
   else if (commandName === 'createchannel') {
@@ -434,72 +394,61 @@ async function createAllChannelsAndRoles(interaction: ChatInputCommandInteractio
   const guild = interaction.guild!;
   let created = 0;
 
-  const getOrCreateCategory = async (name: string) => {
-    let cat = guild.channels.cache.find(
-      (c) => c.type === ChannelType.GuildCategory && c.name === name,
-    );
-    if (!cat) {
-      cat = await guild.channels.create({ name, type: ChannelType.GuildCategory });
-      created++;
-    }
-    return cat;
-  };
+  const categoryMap = new Map<string, import('discord.js').CategoryChannel>();
 
-  const getOrCreateChannel = async (name: string, categoryId: string) => {
-    const existing = guild.channels.cache.find(
-      (c) => c.name === name && c.type === ChannelType.GuildText,
-    );
-    if (!existing) {
-      await guild.channels.create({ name, type: ChannelType.GuildText, parent: categoryId });
+  for (const catName of CATEGORIES) {
+    let cat = guild.channels.cache.find(
+      (c) => c.type === ChannelType.GuildCategory && c.name === catName,
+    ) as import('discord.js').CategoryChannel | undefined;
+    if (!cat) {
+      cat = await guild.channels.create({ name: catName, type: ChannelType.GuildCategory }) as import('discord.js').CategoryChannel;
       created++;
     }
-  };
+    categoryMap.set(catName, cat);
+  }
+
+  const allChannelDefs = [...CHANNELS_TO_CREATE, ...KIT_WAITLIST_CHANNELS];
+
+  for (const def of allChannelDefs) {
+    const cat = categoryMap.get(def.category);
+    const exists = guild.channels.cache.find(
+      (c) => c.name === def.name && c.type === ChannelType.GuildText,
+    );
+    if (!exists) {
+      await guild.channels.create({
+        name: def.name,
+        type: ChannelType.GuildText,
+        parent: cat?.id,
+      });
+      created++;
+    }
+  }
 
   const getOrCreateRole = async (name: string, color?: number) => {
-    const existing = guild.roles.cache.find((r) => r.name === name);
-    if (!existing) {
+    if (!guild.roles.cache.find((r) => r.name === name)) {
       await guild.roles.create({ name, color, reason: 'createchannel setup' });
       created++;
     }
   };
 
-  const catResults = await getOrCreateCategory('Results');
-  const catWaitlists = await getOrCreateCategory('Waitlists');
-  const catTickets = await getOrCreateCategory('Tickets');
-  const catTierlist = await getOrCreateCategory('Tierlist');
-  const catGeneral = await getOrCreateCategory('General');
-  const catServer = await getOrCreateCategory('Server');
-
-  await getOrCreateChannel('high-results', catResults.id);
-  await getOrCreateChannel('results', catResults.id);
-
-  for (const kit of KITS) {
-    await getOrCreateChannel(`${kit}-waitlist`, catWaitlists.id);
-  }
-
-  await getOrCreateChannel('ranked-rubric', catTierlist.id);
-  await getOrCreateChannel('ranked-ruleset', catTierlist.id);
-  await getOrCreateChannel('testing-leaderboard', catTierlist.id);
-  await getOrCreateChannel('request-test', catServer.id);
-  await getOrCreateChannel('general', catGeneral.id);
-  await getOrCreateChannel('announcements', catGeneral.id);
-  await getOrCreateChannel('media', catGeneral.id);
-  await getOrCreateChannel('forum-posting', catGeneral.id);
-
   await getOrCreateRole(VERIFIED_TESTER_ROLE, 0x3498db);
-
-  for (const kit of KITS) {
-    await getOrCreateRole(`${KIT_DISPLAY[kit]} Queue`, 0x2ecc71);
-  }
-
+  for (const kit of KITS) await getOrCreateRole(`${KIT_DISPLAY[kit]} Queue`, 0x2ecc71);
   for (const kit of KITS) {
     for (const tier of TIERS) {
       await getOrCreateRole(`${tier.toUpperCase()} ${KIT_DISPLAY[kit]}`);
     }
   }
 
+  const channelList = KIT_WAITLIST_CHANNELS.map((c) => c.name).join(', ');
   await interaction.editReply({
-    content: `✅ Setup abgeschlossen! **${created}** Channels/Kategorien/Rollen erstellt.\n\nErstellt:\n• Kategorien: Results, Waitlists, Tickets, Tierlist, General, Server\n• Channels: ${KITS.map((k) => `${k}-waitlist`).join(', ')}, results, high-results, ...\n• Rollen: Verified Tester, Kit-Queue-Rollen (${KITS.length}), Tier-Rollen (${KITS.length * TIERS.length})`,
+    content: [
+      `✅ **Setup abgeschlossen!** ${created} neue Elemente erstellt.\n`,
+      `**Kategorien:** ${CATEGORIES.join(', ')}`,
+      `**Waitlist-Channels:** ${channelList}`,
+      `**Tier-Rollen:** ${KITS.length * TIERS.length} (z.B. \`LT5 Sword\`, \`HT3 Crystal\` …)`,
+      `**Queue-Rollen:** ${KITS.length} (z.B. \`Sword Queue\`)`,
+      `\nGib jetzt dem ersten Verified Tester die **Verified Tester** Rolle, dann kann er /open nutzen!`,
+    ].join('\n'),
   });
 }
 
@@ -523,7 +472,6 @@ async function handleButton(interaction: ButtonInteraction): Promise<void> {
       await interaction.reply({ content: '❌ Die Queue ist voll (20/20).', ephemeral: true });
       return;
     }
-
     const profile = getUserProfile(guild.id, interaction.user.id);
     const player: Player = {
       userId: interaction.user.id,
@@ -532,87 +480,52 @@ async function handleButton(interaction: ButtonInteraction): Promise<void> {
       server: profile?.server ?? 'Unknown',
       joinedAt: new Date(),
     };
-
     state.players.push(player);
     const pos = state.players.length;
     setQueue(guild.id, kit, state);
-
     const tc = interaction.channel as TextChannel;
     await refreshQueueMessage(tc, state);
     setQueue(guild.id, kit, state);
-
     await interaction.reply({ content: `✅ Du bist jetzt **#${pos}** in der **${KIT_DISPLAY[kit]}** Queue!`, ephemeral: true });
   }
 
   else if (customId.startsWith('leave_queue_')) {
     const kit = customId.replace('leave_queue_', '') as Kit;
     const state = getQueue(guild.id, kit);
-    if (!state) {
-      await interaction.reply({ content: '❌ Keine Queue gefunden.', ephemeral: true });
-      return;
-    }
+    if (!state) { await interaction.reply({ content: '❌ Keine Queue gefunden.', ephemeral: true }); return; }
     const idx = state.players.findIndex((p) => p.userId === interaction.user.id);
-    if (idx === -1) {
-      await interaction.reply({ content: '❌ Du bist nicht in der Queue.', ephemeral: true });
-      return;
-    }
+    if (idx === -1) { await interaction.reply({ content: '❌ Du bist nicht in der Queue.', ephemeral: true }); return; }
     state.players.splice(idx, 1);
     setQueue(guild.id, kit, state);
-
     const tc = interaction.channel as TextChannel;
     await refreshQueueMessage(tc, state);
     setQueue(guild.id, kit, state);
-
     await interaction.reply({ content: `✅ Du hast die **${KIT_DISPLAY[kit]}** Queue verlassen.`, ephemeral: true });
   }
 
   else if (customId === 'verify_account') {
-    const modal = new ModalBuilder()
-      .setCustomId('modal_verify_account')
-      .setTitle('Account Verifizieren');
+    const modal = new ModalBuilder().setCustomId('modal_verify_account').setTitle('Account Verifizieren');
     const usernameInput = new TextInputBuilder()
-      .setCustomId('mc_username')
-      .setLabel('Minecraft Username')
-      .setStyle(TextInputStyle.Short)
-      .setPlaceholder('Dein Minecraft IGN')
-      .setRequired(true);
+      .setCustomId('mc_username').setLabel('Minecraft Username').setStyle(TextInputStyle.Short)
+      .setPlaceholder('Dein Minecraft IGN').setRequired(true);
     modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(usernameInput));
     await interaction.showModal(modal);
   }
 
   else if (customId === 'enter_waitlist') {
-    const modal = new ModalBuilder()
-      .setCustomId('modal_enter_waitlist')
-      .setTitle('Waitlist beitreten');
-
+    const modal = new ModalBuilder().setCustomId('modal_enter_waitlist').setTitle('Waitlist beitreten');
     const usernameInput = new TextInputBuilder()
-      .setCustomId('mc_username')
-      .setLabel('Minecraft Username (IGN)')
-      .setStyle(TextInputStyle.Short)
-      .setPlaceholder('Dein Minecraft IGN')
-      .setRequired(true);
-
+      .setCustomId('mc_username').setLabel('Minecraft Username (IGN)').setStyle(TextInputStyle.Short)
+      .setPlaceholder('Dein Minecraft IGN').setRequired(true);
     const kitInput = new TextInputBuilder()
-      .setCustomId('kit')
-      .setLabel('Kit')
-      .setStyle(TextInputStyle.Short)
-      .setPlaceholder('uhc, sword, mace, diapot, nethpot, smp, crystal, axe')
-      .setRequired(true);
-
+      .setCustomId('kit').setLabel('Kit').setStyle(TextInputStyle.Short)
+      .setPlaceholder('uhc, sword, mace, diapot, nethpot, smp, crystal, axe').setRequired(true);
     const tierInput = new TextInputBuilder()
-      .setCustomId('current_tier')
-      .setLabel('Aktuelles Tier (z.B. ht5, lt3, N/A)')
-      .setStyle(TextInputStyle.Short)
-      .setPlaceholder('lt5, ht5, lt4, ht4, lt3, ht3, lt2, ht2, lt1, ht1 oder N/A')
-      .setRequired(true);
-
+      .setCustomId('current_tier').setLabel('Aktuelles Tier (z.B. ht5, lt3 oder N/A)').setStyle(TextInputStyle.Short)
+      .setPlaceholder('lt5, ht5, lt4, ht4, lt3, ht3, lt2, ht2, lt1, ht1 oder N/A').setRequired(true);
     const serverInput = new TextInputBuilder()
-      .setCustomId('server')
-      .setLabel('Server (z.B. BerryPvP, CatPvP)')
-      .setStyle(TextInputStyle.Short)
-      .setPlaceholder('BerryPvP, CatPvP, Turtled...')
-      .setRequired(true);
-
+      .setCustomId('server').setLabel('Server (z.B. BerryPvP, CatPvP)').setStyle(TextInputStyle.Short)
+      .setPlaceholder('BerryPvP, CatPvP, Turtled...').setRequired(true);
     modal.addComponents(
       new ActionRowBuilder<TextInputBuilder>().addComponents(usernameInput),
       new ActionRowBuilder<TextInputBuilder>().addComponents(kitInput),
@@ -630,19 +543,11 @@ async function handleModal(interaction: ModalSubmitInteraction): Promise<void> {
 
   if (customId === 'modal_verify_account') {
     const ign = interaction.fields.getTextInputValue('mc_username').trim();
-
     let profile = getUserProfile(guild.id, interaction.user.id);
-    if (!profile) {
-      profile = { ign, server: '', tierPerKit: new Map(), discordId: interaction.user.id };
-    } else {
-      profile.ign = ign;
-    }
+    if (!profile) profile = { ign, server: '', tierPerKit: new Map(), discordId: interaction.user.id };
+    else profile.ign = ign;
     setUserProfile(guild.id, interaction.user.id, profile);
-
-    await interaction.reply({
-      content: `✅ Account verifiziert! IGN gesetzt auf: **${ign}**`,
-      ephemeral: true,
-    });
+    await interaction.reply({ content: `✅ Account verifiziert! IGN gesetzt auf: **${ign}**`, ephemeral: true });
   }
 
   else if (customId === 'modal_enter_waitlist') {
@@ -652,42 +557,29 @@ async function handleModal(interaction: ModalSubmitInteraction): Promise<void> {
     const server = interaction.fields.getTextInputValue('server').trim();
 
     if (!KITS.includes(kitRaw)) {
-      await interaction.reply({
-        content: `❌ Ungültiges Kit. Gültige Kits: ${KITS.join(', ')}`,
-        ephemeral: true,
-      });
+      await interaction.reply({ content: `❌ Ungültiges Kit. Gültige Kits: ${KITS.join(', ')}`, ephemeral: true });
       return;
     }
-
     const tierValue = tierRaw === 'n/a' || tierRaw === 'na' ? null : (tierRaw as Tier);
     if (tierValue && !TIERS.includes(tierValue)) {
-      await interaction.reply({
-        content: `❌ Ungültiges Tier. Gültige Tiers: ${TIERS.join(', ')} oder N/A`,
-        ephemeral: true,
-      });
+      await interaction.reply({ content: `❌ Ungültiges Tier. Gültige Tiers: ${TIERS.join(', ')} oder N/A`, ephemeral: true });
       return;
     }
 
     let profile = getUserProfile(guild.id, interaction.user.id);
-    if (!profile) {
-      profile = { ign, server, tierPerKit: new Map(), discordId: interaction.user.id };
-    } else {
-      profile.ign = ign;
-      profile.server = server;
-    }
+    if (!profile) profile = { ign, server, tierPerKit: new Map(), discordId: interaction.user.id };
+    else { profile.ign = ign; profile.server = server; }
     if (tierValue) profile.tierPerKit.set(kitRaw, tierValue);
     setUserProfile(guild.id, interaction.user.id, profile);
 
     const roleName = `${KIT_DISPLAY[kitRaw]} Queue`;
     let queueRole = guild.roles.cache.find((r) => r.name === roleName);
-    if (!queueRole) {
-      queueRole = await guild.roles.create({ name: roleName, reason: 'Waitlist join' });
-    }
+    if (!queueRole) queueRole = await guild.roles.create({ name: roleName, reason: 'Waitlist join' });
     await guildMember.roles.add(queueRole).catch(() => {});
 
     const tierDisplay = tierValue ? TIER_DISPLAY[tierValue] : 'N/A';
     await interaction.reply({
-      content: `✅ Du bist der **${KIT_DISPLAY[kitRaw]}** Waitlist beigetreten!\n**IGN:** ${ign}\n**Tier:** ${tierDisplay}\n**Server:** ${server}\nDu bekommst gepingt, wenn ein Tester verfügbar ist.`,
+      content: `✅ Du bist der **${KIT_DISPLAY[kitRaw]}** Waitlist beigetreten!\n**IGN:** ${ign}\n**Tier:** ${tierDisplay}\n**Server:** ${server}`,
       ephemeral: true,
     });
   }

@@ -25,6 +25,7 @@ export interface UserProfile {
   ign: string;
   server: string;
   tierPerKit: Map<Kit, Tier>;
+  lastTestedPerKit: Map<Kit, Date>;
   discordId: string;
 }
 
@@ -93,4 +94,28 @@ export function setLeaderboardEntry(guildId: string, ign: string, kit: Kit, tier
 }
 export function removeLeaderboardEntry(guildId: string, ign: string): boolean {
   return getLeaderboard(guildId).delete(ign.toLowerCase());
+}
+
+export const COOLDOWN_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+export function getKitCooldown(guildId: string, userId: string, kit: Kit): Date | null {
+  return getUserProfile(guildId, userId)?.lastTestedPerKit.get(kit) ?? null;
+}
+export function setKitCooldown(guildId: string, userId: string, kit: Kit): void {
+  const profile = getUserProfile(guildId, userId);
+  if (profile) { profile.lastTestedPerKit.set(kit, new Date()); setUserProfile(guildId, userId, profile); }
+}
+export function clearKitCooldown(guildId: string, userId: string, kit: Kit): void {
+  const profile = getUserProfile(guildId, userId);
+  if (profile) { profile.lastTestedPerKit.delete(kit); setUserProfile(guildId, userId, profile); }
+}
+export function isOnCooldown(guildId: string, userId: string, kit: Kit): boolean {
+  const last = getKitCooldown(guildId, userId, kit);
+  if (!last) return false;
+  return Date.now() - last.getTime() < COOLDOWN_MS;
+}
+export function cooldownRemaining(guildId: string, userId: string, kit: Kit): number {
+  const last = getKitCooldown(guildId, userId, kit);
+  if (!last) return 0;
+  return Math.max(0, COOLDOWN_MS - (Date.now() - last.getTime()));
 }

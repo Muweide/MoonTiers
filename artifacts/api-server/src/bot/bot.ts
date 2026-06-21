@@ -15,6 +15,7 @@ import {
   getQueue, setQueue, getUserProfile, setUserProfile,
   incrementTesterStat, getTopTesters, getLeaderboard,
   setLeaderboardEntry, removeLeaderboardEntry,
+  isOnCooldown, cooldownRemaining, setKitCooldown, clearKitCooldown,
   type Player, type QueueState,
 } from './store.js';
 import {
@@ -187,6 +188,26 @@ const commands = [
     .addSubcommand((s) =>
       s.setName('remove').setDescription('Spieler entfernen')
         .addStringOption((o) => o.setName('ign').setDescription('Minecraft Username').setRequired(true)),
+    )
+    .toJSON(),
+
+  new SlashCommandBuilder().setName('cooldown')
+    .setDescription('Cooldown eines Spielers verwalten (nur Admin *)')
+    .addSubcommand((s) =>
+      s.setName('remove').setDescription('24h Cooldown für ein Kit entfernen')
+        .addUserOption((o) => o.setName('user').setDescription('Der Spieler').setRequired(true))
+        .addStringOption((o) =>
+          o.setName('kit').setDescription('Kit').setRequired(true)
+            .addChoices(...KITS.map((k) => ({ name: KIT_DISPLAY[k], value: k }))),
+        ),
+    )
+    .addSubcommand((s) =>
+      s.setName('check').setDescription('Cooldown eines Spielers anzeigen')
+        .addUserOption((o) => o.setName('user').setDescription('Der Spieler').setRequired(true))
+        .addStringOption((o) =>
+          o.setName('kit').setDescription('Kit').setRequired(true)
+            .addChoices(...KITS.map((k) => ({ name: KIT_DISPLAY[k], value: k }))),
+        ),
     )
     .toJSON(),
 ];
@@ -434,14 +455,24 @@ async function handleCommand(interaction: ChatInputCommandInteraction): Promise<
     let targetMember: GuildMember | null = null;
     try { targetMember = await guild.members.fetch(player.userId); } catch {}
     if (targetMember) {
+      // Remove all old tier roles for this kit
       for (const rn of allOldRoles) {
         const role = guild.roles.cache.find((r) => r.name === rn);
         if (role && targetMember!.roles.cache.has(role.id)) await targetMember!.roles.remove(role).catch(() => {});
       }
+      // Add new tier role
       let newRole = guild.roles.cache.find((r) => r.name === newRoleName);
       if (!newRole) newRole = await guild.roles.create({ name: newRoleName, reason: 'Tier result' });
       await targetMember.roles.add(newRole).catch(() => {});
+      // Remove the {kit} Queue role (player tested, cooldown starts)
+      const queueRoleName = `${KIT_DISPLAY[kit]} Queue`;
+      const queueRole = guild.roles.cache.find((r) => r.name === queueRoleName);
+      if (queueRole && targetMember.roles.cache.has(queueRole.id)) {
+        await targetMember.roles.remove(queueRole).catch(() => {});
+      }
     }
+    // Set 24h cooldown for this kit
+    setKitCooldown(guild.id, player.userId, kit);
 
     const testerMention = `<@${testerUser.id}>`;
     const resultEmbed = buildResultEmbed(player, testerMention, prevTier, tierValue, kit);
@@ -570,6 +601,51 @@ async function handleCommand(interaction: ChatInputCommandInteraction): Promise<
       });
     }
   }
+
+  // ── /cooldown ─────────────────────────────────────────────────────────────
+  else if (commandName === 'cooldown') {
+    if (!hasAdmin(guildMember)) {
+      await interaction.reply({ content: '❌ Nur Admins (*) können diesen Command nutzen.', ephemeral: true });
+      return;
+    }
+    const sub = interaction.options.getSubcommand();
+    const targetUser = interaction.options.getUser('user', true);
+    const kit = interaction.options.getString('kit', true) as Kit;
+
+    if (sub === 'remove') {
+      clearKitCooldown(guild.id, targetUser.id, kit);
+      // Also remove the Queue role so they can re-join
+      try {
+        const targetMember = await guild.members.fetch(targetUser.id);
+        const queueRoleName = `${KIT_DISPLAY[kit]} Queue`;
+        const queueRole = guild.roles.cache.find((r) => r.name === queueRoleName);
+        if (queueRole && targetMember.roles.cache.has(queueRole.id)) {
+          await targetMember.roles.remove(queueRole).catch(() => {});
+        }
+      } catch {}
+      await interaction.reply({
+        content: `✅ Cooldown von <@${targetUser.id}> für **${KIT_DISPLAY[kit]}** wurde entfernt. Sie können sich jetzt wieder testen lassen.`,
+        ephemeral: true,
+      });
+    }
+
+    else if (sub === 'check') {
+      const msLeft = cooldownRemaining(guild.id, targetUser.id, kit);
+      if (msLeft <= 0) {
+        await interaction.reply({
+          content: `✅ <@${targetUser.id}> hat **keinen** aktiven Cooldown für **${KIT_DISPLAY[kit]}**.`,
+          ephemeral: true,
+        });
+      } else {
+        const hLeft = Math.floor(msLeft / (1000 * 60 * 60));
+        const mLeft = Math.floor((msLeft % (1000 * 60 * 60)) / (1000 * 60));
+        await interaction.reply({
+          content: `⏳ <@${targetUser.id}> hat noch **${hLeft}h ${mLeft}m** Cooldown für **${KIT_DISPLAY[kit]}**.`,
+          ephemeral: true,
+        });
+      }
+    }
+  }
 }
 
 async function createAllChannelsAndRoles(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -695,8 +771,19 @@ async function handleModal(interaction: ModalSubmitInteraction): Promise<void> {
       return;
     }
 
+    // 24h cooldown check
+    if (isOnCooldown(guild.id, interaction.user.id, kitRaw)) {
+      const msLeft = cooldownRemaining(guild.id, interaction.user.id, kitRaw);
+      const hLeft = Math.ceil(msLeft / (1000 * 60 * 60));
+      await interaction.reply({
+        content: `⏳ Du wurdest in **${KIT_DISPLAY[kitRaw]}** bereits heute getestet. Du kannst dich erst in **${hLeft}h** wieder testen lassen.`,
+        ephemeral: true,
+      });
+      return;
+    }
+
     let profile = getUserProfile(guild.id, interaction.user.id);
-    if (!profile) profile = { ign, server, tierPerKit: new Map(), discordId: interaction.user.id };
+    if (!profile) profile = { ign, server, tierPerKit: new Map(), lastTestedPerKit: new Map(), discordId: interaction.user.id };
     else { profile.ign = ign; profile.server = server; }
     setUserProfile(guild.id, interaction.user.id, profile);
 

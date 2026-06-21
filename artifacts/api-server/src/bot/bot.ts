@@ -191,19 +191,25 @@ const commands = [
     .toJSON(),
 ];
 
-async function registerCommands(clientId: string): Promise<void> {
+async function registerCommandsForGuild(clientId: string, guildId: string): Promise<void> {
   const rest = new REST({ version: '10' }).setToken(TOKEN!);
-  await rest.put(Routes.applicationCommands(clientId), { body: commands });
-  logger.info('Slash commands registered globally');
+  await rest.put(Routes.applicationGuildCommands(clientId, guildId), { body: commands });
+  logger.info({ guildId }, 'Slash commands registered for guild');
 }
 
 client.once(Events.ClientReady, async (c) => {
   logger.info({ tag: c.user.tag }, 'Discord bot ready');
-  await registerCommands(c.user.id);
-  // Initialize pinned leaderboards in all guilds
   for (const guild of c.guilds.cache.values()) {
+    await registerCommandsForGuild(c.user.id, guild.id).catch((e) =>
+      logger.error({ e, guildId: guild.id }, 'Failed to register commands'),
+    );
     await getOrPostLeaderboards(guild).catch(() => {});
   }
+});
+
+// Register commands when bot joins a new guild
+client.on(Events.GuildCreate, async (guild) => {
+  await registerCommandsForGuild(client.user!.id, guild.id).catch(() => {});
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {

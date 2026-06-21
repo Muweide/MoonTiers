@@ -32,8 +32,53 @@ export const client = new Client({
   ],
 });
 
-// Track live leaderboard messages for auto-refresh
+// Per-guild pinned leaderboard message IDs in testing-leaderboard channel
+interface GuildLBMsgs { channelId: string; playerMsgId: string | null; testerMsgId: string | null; }
+const guildLeaderboardMsgs = new Map<string, GuildLBMsgs>();
+
+// Track manually-posted leaderboard messages for /leaderboard show & /testerleaderboard
 const liveLeaderboards = new Map<string, { msg: Message; type: 'tester' | 'player'; guildId: string }>();
+
+async function getOrPostLeaderboards(guild: import('discord.js').Guild): Promise<void> {
+  const lbChannel = guild.channels.cache.find(
+    (c) => c.type === ChannelType.GuildText && c.name.toLowerCase().includes('testing-leaderboard'),
+  ) as TextChannel | undefined;
+  if (!lbChannel) return;
+
+  let entry = guildLeaderboardMsgs.get(guild.id);
+  if (!entry) {
+    entry = { channelId: lbChannel.id, playerMsgId: null, testerMsgId: null };
+    guildLeaderboardMsgs.set(guild.id, entry);
+  }
+
+  // Player leaderboard
+  const lb = getLeaderboard(guild.id);
+  const playerEmbed = buildPlayerLeaderboardEmbed([...lb.values()]);
+  if (entry.playerMsgId) {
+    const existing = await lbChannel.messages.fetch(entry.playerMsgId).catch(() => null);
+    if (existing) { await existing.edit({ embeds: [playerEmbed] }); }
+    else { const m = await lbChannel.send({ embeds: [playerEmbed] }); entry.playerMsgId = m.id; }
+  } else {
+    const m = await lbChannel.send({ embeds: [playerEmbed] });
+    entry.playerMsgId = m.id;
+  }
+
+  // Tester leaderboard
+  const testerEmbed = buildTesterLeaderboardEmbed(getTopTesters(guild.id));
+  if (entry.testerMsgId) {
+    const existing = await lbChannel.messages.fetch(entry.testerMsgId).catch(() => null);
+    if (existing) { await existing.edit({ embeds: [testerEmbed] }); }
+    else { const m = await lbChannel.send({ embeds: [testerEmbed] }); entry.testerMsgId = m.id; }
+  } else {
+    const m = await lbChannel.send({ embeds: [testerEmbed] });
+    entry.testerMsgId = m.id;
+  }
+}
+
+async function refreshGuildLeaderboards(guildId: string): Promise<void> {
+  const guild = client.guilds.cache.get(guildId);
+  if (guild) await getOrPostLeaderboards(guild).catch(() => {});
+}
 
 function hasVerifiedTester(member: GuildMember): boolean {
   return member.roles.cache.some((r) => r.name === VERIFIED_TESTER_ROLE);
@@ -60,14 +105,15 @@ async function refreshQueueMessage(channel: TextChannel, state: QueueState): Pro
   } catch (e) { logger.error({ e }, 'Failed to refresh queue message'); }
 }
 
-// Auto-refresh leaderboards every 10 seconds
+// Auto-refresh every 10 seconds: pinned channel boards + manually-posted boards
 setInterval(async () => {
+  // Refresh pinned leaderboards in testing-leaderboard channels
+  for (const guild of client.guilds.cache.values()) {
+    await refreshGuildLeaderboards(guild.id).catch(() => {});
+  }
+  // Refresh manually-posted /leaderboard show & /testerleaderboard messages
   for (const [msgId, entry] of liveLeaderboards) {
     try {
-      const guild = client.guilds.cache.find((g) =>
-        g.channels.cache.has(entry.msg.channelId),
-      );
-      if (!guild) continue;
       let embed: EmbedBuilder;
       if (entry.type === 'tester') {
         embed = buildTesterLeaderboardEmbed(getTopTesters(entry.guildId));
@@ -154,6 +200,10 @@ async function registerCommands(clientId: string): Promise<void> {
 client.once(Events.ClientReady, async (c) => {
   logger.info({ tag: c.user.tag }, 'Discord bot ready');
   await registerCommands(c.user.id);
+  // Initialize pinned leaderboards in all guilds
+  for (const guild of c.guilds.cache.values()) {
+    await getOrPostLeaderboards(guild).catch(() => {});
+  }
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
@@ -409,6 +459,8 @@ async function handleCommand(interaction: ChatInputCommandInteraction): Promise<
     const tc = channel as TextChannel;
     await refreshQueueMessage(tc, state);
     setQueue(guild.id, kit, state);
+    // Immediately update pinned leaderboards
+    await refreshGuildLeaderboards(guild.id);
     await interaction.editReply({ content: `✅ Ergebnis gepostet! **${TIER_DISPLAY[tierValue]}** für **${player.ign}**` });
   }
 

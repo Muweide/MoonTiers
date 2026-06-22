@@ -1,0 +1,7 @@
+[build]
+builder = "nixpacks"
+buildCommand = "npm install -g pnpm && pnpm install --frozen-lockfile && pnpm --filter @workspace/api-server run build"
+
+[deploy]
+startCommand = "node --enable-source-maps ./artifacts/api-server/dist/index.mjs"
+restartPolicyType = "always"
